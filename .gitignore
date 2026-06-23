@@ -50,3 +50,6 @@ config/secrets.yaml
 Thumbs.db
 output*
 demo_outputs/
+
+# Local server verification logs
+uvicorn-onevoice*.log

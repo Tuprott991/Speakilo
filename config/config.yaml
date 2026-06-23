@@ -1,67 +1,48 @@
-# Pipeline Configuration — OneVoice Edge
+# OneVoice Edge runtime configuration.
 
-# ─────────────────────────────────────────────
-# Audio Capture
-# ─────────────────────────────────────────────
 audio:
   sample_rate: 16000
   chunk_size: 1024
   channels: 1
-  format: int16           # pyaudio.paInt16
-  vad_threshold: 0.5      # Silero VAD sensitivity (0.0 - 1.0)
-  vad_min_speech_ms: 300  # Minimum speech duration to trigger pipeline
-  vad_window_ms: 256      # Run endpoint checks on short rolling windows
-  vad_min_silence_ms: 280 # End utterance quickly after speech stops
-  vad_pre_roll_ms: 160    # Keep a little audio before speech starts
-  vad_speech_pad_ms: 80   # Keep a little audio after speech ends
-  vad_max_segment_s: 8.0  # Flush long utterances instead of growing forever
+  format: int16
+  vad_threshold: 0.5
+  vad_min_speech_ms: 300
+  vad_window_ms: 256
+  vad_min_silence_ms: 280
+  vad_pre_roll_ms: 160
+  vad_speech_pad_ms: 80
+  vad_max_segment_s: 8.0
 
-# ─────────────────────────────────────────────
-# Trạm 0: Denoise (GIPFormer ONNX)  
-# ─────────────────────────────────────────────
 denoise:
   enabled: true
   model_path: "models/gipformer_denoise.onnx"
-  use_gpu: false           # ONNX CPU inference on edge device
+  use_gpu: false
 
-# ─────────────────────────────────────────────
-# Trạm 1: ASR (GIPFormer VI & SenseVoice EN)
-# ─────────────────────────────────────────────
 asr:
   num_threads: 2
   streaming: true
-  chunk_length_s: 3        # Process 3-second audio chunks for low latency
-  
-sensevoice:
-  model_path: "iic/SenseVoiceSmall"  # Auto-download from ModelScope if not local
+  chunk_length_s: 3
 
-# ─────────────────────────────────────────────
-# Trạm 2: Machine Translation (VietAI envit5)
-# ─────────────────────────────────────────────
+sensevoice:
+  model_path: "iic/SenseVoiceSmall"
+
 translation:
-  model: "VietAI/envit5-translation"     # 1 model duy nhất cho cả VI↔EN (~600MB)
-  model_dir: "models/envit5/"            # Local checkpoint (tùy chọn)
-  backend: "auto"                        # "auto" | "ctranslate2" | "transformers"
+  model: "VietAI/envit5-translation"
+  model_dir: "models/envit5/"
+  backend: "auto"
   ct2_model_dir: "models/envit5-ct2-int8/"
   compute_type: "int8"
   inter_threads: 1
   intra_threads: 4
-  beam_size: 1                           # Low-latency default; increase for quality
+  beam_size: 1
   max_length: 512
-  direction: "vi2en"                     # Default direction
+  direction: "vi2en"
 
-# ─────────────────────────────────────────────
-# Trạm 3: TTS (BetterBox-TTS / Tiny VITS)
-# ─────────────────────────────────────────────
 tts:
-  default_engine: "betterbox"     # "betterbox" | "vits" | "vallex" (premium)
-  en_speed: 0.85                  # Tốc độ đọc (0.7=rất chậm, 0.85=chậm chắc, 1.0=bình thường, 1.2=nhanh)
-
-  # ── Giọng mẫu tiếng Anh (Voice Preset) ─────────────────────────────
-  # Chạy 'python scripts/download_voice_preset.py' để tải giọng mẫu chất lượng cao.
-  # Nếu file không tồn tại, hệ thống sẽ tự động dùng clone giọng từ file đầu vào.
+  default_engine: "betterbox"
+  en_speed: 0.85
   en_preset_audio: "src/tts/presets/en_male_narrator.wav"
-  en_preset_text:  "Some call me nature, others call me mother nature."
+  en_preset_text: "Some call me nature, others call me mother nature."
   betterbox:
     model_path: "models/betterbox/"
     language: "vi"
@@ -70,14 +51,11 @@ tts:
   vits:
     model_path: "models/vits_en_tiny.onnx"
     language: "en"
-  vallex:                         # Premium Mode (requires Wi-Fi or charging)
+  vallex:
     enabled: false
     model_path: "models/vallex/"
 
-# ─────────────────────────────────────────────
-# Pipeline Orchestrator
-# ─────────────────────────────────────────────
 pipeline:
-  queue_maxsize: 10        # Max items in each inter-stage queue
-  target_latency_ms: 1000  # Alert if total latency exceeds this
-  log_latency: true        # Print per-stage timing to console
+  queue_maxsize: 10
+  target_latency_ms: 1000
+  log_latency: true

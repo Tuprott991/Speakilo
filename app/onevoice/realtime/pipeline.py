@@ -1,50 +1,34 @@
-"""
-OneVoice Edge main pipeline orchestrator.
+"""Realtime ASR -> MT pipeline orchestration."""
 
-The pipeline is intentionally staged:
-  audio raw queue -> denoise worker -> clean audio queue -> ASR worker
-  -> source text queue -> MT worker -> translated result queue
-
-TTS is disabled in the default live pipeline. The web UI can trigger TTS
-explicitly after a translated result is available.
-"""
+from __future__ import annotations
 
 import argparse
-import os
 import queue
-import sys
 import threading
 import time
+from pathlib import Path
+from typing import Any
 
-import yaml
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-from asr.asr_manager import ASRManager
-from audio.capture import AudioCapture
-from audio.denoise import Denoiser
-from translation.mt_engine import Translator
-from utils.srt_generator import SRTGenerator
-from utils.text_normalizer import normalize
-
-
-def load_config(path: str = "config/config.yaml") -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+from onevoice.adapters.asr import ASRManager
+from onevoice.adapters.audio import AudioCapture, Denoiser
+from onevoice.adapters.subtitles import SRTGenerator
+from onevoice.adapters.text import normalize
+from onevoice.adapters.translation import Translator
+from onevoice.config import load_config
 
 
 class OneVoicePipeline:
-    """End-to-end real-time VI<->EN speech translation pipeline."""
+    """Staged realtime pipeline for VI<->EN speech translation."""
 
-    def __init__(self, config_path: str = "config/config.yaml", direction: str = "vi2en"):
+    def __init__(self, config_path: str | Path = "config/config.yaml", direction: str = "vi2en"):
         self.cfg = load_config(config_path)
         self.direction = direction
         q_size = self.cfg["pipeline"]["queue_maxsize"]
 
-        self.q_audio_raw = queue.Queue(maxsize=q_size)
-        self.q_audio_clean = queue.Queue(maxsize=q_size)
-        self.q_text_src = queue.Queue(maxsize=q_size)
-        self.q_results = queue.Queue(maxsize=q_size)
+        self.q_audio_raw: queue.Queue = queue.Queue(maxsize=q_size)
+        self.q_audio_clean: queue.Queue = queue.Queue(maxsize=q_size)
+        self.q_text_src: queue.Queue = queue.Queue(maxsize=q_size)
+        self.q_results: queue.Queue = queue.Queue(maxsize=q_size)
 
         self.capture = AudioCapture(self.q_audio_raw, self.cfg)
         self.denoiser = Denoiser(num_threads=2)
@@ -63,17 +47,16 @@ class OneVoicePipeline:
                 raw_item = self.q_audio_raw.get(timeout=1)
                 if isinstance(raw_item, dict):
                     raw = raw_item["audio"]
-                    meta = {k: v for k, v in raw_item.items() if k != "audio"}
+                    meta = {key: value for key, value in raw_item.items() if key != "audio"}
                 else:
                     raw = raw_item
                     meta = {}
 
-                t0 = time.perf_counter()
+                start = time.perf_counter()
                 clean = self.denoiser.denoise(raw)
-                meta["denoise_ms"] = (time.perf_counter() - t0) * 1000
+                meta["denoise_ms"] = (time.perf_counter() - start) * 1000
                 meta["audio"] = clean
-                if not self.q_audio_clean.full():
-                    self.q_audio_clean.put(meta)
+                self._put_drop_oldest(self.q_audio_clean, meta)
                 self.q_audio_raw.task_done()
             except queue.Empty:
                 continue
@@ -91,9 +74,9 @@ class OneVoicePipeline:
                     audio, denoise_ms = audio_item
                     direction = self.direction
 
-                t0 = time.perf_counter()
+                start = time.perf_counter()
                 result = self.asr.transcribe(audio, direction=direction)
-                asr_ms = (time.perf_counter() - t0) * 1000
+                asr_ms = (time.perf_counter() - start) * 1000
 
                 if result.get("text"):
                     result["text"] = normalize(result["text"], lang=result["lang"])
@@ -103,7 +86,7 @@ class OneVoicePipeline:
                     if isinstance(audio_item, dict):
                         result["request_id"] = audio_item.get("request_id")
                         result["created_at"] = audio_item.get("created_at")
-                    self.q_text_src.put(result)
+                    self._put_drop_oldest(self.q_text_src, result)
                 elif isinstance(audio_item, dict) and audio_item.get("request_id"):
                     self._emit_error(
                         audio_item.get("request_id"),
@@ -125,30 +108,22 @@ class OneVoicePipeline:
         while True:
             try:
                 item = self.q_text_src.get(timeout=1)
-                t0 = time.perf_counter()
+                start = time.perf_counter()
                 translated = self.translator.translate(item["text"], direction=item["direction"])
-                item["mt_ms"] = (time.perf_counter() - t0) * 1000
+                item["mt_ms"] = (time.perf_counter() - start) * 1000
 
                 if translated:
                     item["translated"] = translated
-                    total_ms = (
-                        item.get("denoise_ms", 0)
-                        + item.get("asr_ms", 0)
-                        + item.get("mt_ms", 0)
-                    )
+                    total_ms = item.get("denoise_ms", 0) + item.get("asr_ms", 0) + item.get("mt_ms", 0)
                     self._log_latency(item, total_ms)
-                    self.srt.add_entry(
-                        item["text"],
-                        item["translated"],
-                        item.get("audio_duration_s", 1.0),
-                    )
+                    self.srt.add_entry(item["text"], item["translated"], item.get("audio_duration_s", 1.0))
                     self._emit_result(item, total_ms)
 
                 self.q_text_src.task_done()
             except queue.Empty:
                 continue
 
-    def _emit_result(self, item: dict, total_ms: float):
+    def _emit_result(self, item: dict[str, Any], total_ms: float):
         result = {
             "request_id": item.get("request_id"),
             "source_text": item["text"],
@@ -164,12 +139,12 @@ class OneVoicePipeline:
                 "total": round(total_ms, 1),
             },
         }
-        if not self.q_results.full():
-            self.q_results.put(result)
+        self._put_drop_oldest(self.q_results, result)
 
-    def _emit_error(self, request_id: str, message: str, latency_ms: dict = None):
-        if not self.q_results.full():
-            self.q_results.put({
+    def _emit_error(self, request_id: str, message: str, latency_ms: dict[str, float] | None = None):
+        self._put_drop_oldest(
+            self.q_results,
+            {
                 "request_id": request_id,
                 "error": message,
                 "source_text": "",
@@ -179,9 +154,10 @@ class OneVoicePipeline:
                 "event": "none",
                 "audio_duration_s": 0,
                 "latency_ms": latency_ms or {},
-            })
+            },
+        )
 
-    def _log_latency(self, item: dict, total_ms: float):
+    def _log_latency(self, item: dict[str, Any], total_ms: float):
         arrow = "VI->EN" if item.get("direction") == "vi2en" else "EN->VI"
         status = "OK" if total_ms < 1000 else "SLOW"
         print(
@@ -197,15 +173,15 @@ class OneVoicePipeline:
         if self._models_loaded:
             return
         print("\n[Pipeline] Loading models (VI<->EN pipeline)...")
-        t0 = time.perf_counter()
+        start = time.perf_counter()
         self.denoiser.load()
         self.asr.load()
         self.translator.load()
         self._models_loaded = True
-        print(f"\n[Pipeline] All models loaded in {time.perf_counter() - t0:.1f}s\n")
+        print(f"\n[Pipeline] All models loaded in {time.perf_counter() - start:.1f}s\n")
 
     def start_workers(self, use_capture: bool = True):
-        """Start the queue workers. Web mode sets use_capture=False."""
+        """Start queue workers. Web mode sets use_capture=False."""
         self.load_models()
         if self._workers_started:
             return
@@ -222,16 +198,19 @@ class OneVoicePipeline:
             worker.start()
         self._workers_started = True
 
-    def submit_audio(self, audio, direction: str = None, request_id: str = None):
-        """Push a speech segment into the streaming queue path."""
-        self.q_audio_raw.put({
-            "audio": audio,
-            "direction": direction or self.direction,
-            "request_id": request_id,
-            "created_at": time.perf_counter(),
-        })
+    def submit_audio(self, audio, direction: str | None = None, request_id: str | None = None):
+        """Push one speech segment into the realtime queue path."""
+        self._put_drop_oldest(
+            self.q_audio_raw,
+            {
+                "audio": audio,
+                "direction": direction or self.direction,
+                "request_id": request_id,
+                "created_at": time.perf_counter(),
+            },
+        )
 
-    def get_result(self, request_id: str = None, timeout: float = 15.0):
+    def get_result(self, request_id: str | None = None, timeout: float = 15.0):
         """Wait for a translated result emitted by the MT worker."""
         deadline = time.perf_counter() + timeout
         parked = []
@@ -246,8 +225,7 @@ class OneVoicePipeline:
             pass
         finally:
             for item in parked:
-                if not self.q_results.full():
-                    self.q_results.put(item)
+                self._put_drop_oldest(self.q_results, item)
         return None
 
     def start(self):
@@ -262,12 +240,9 @@ class OneVoicePipeline:
                 if self._latency_log:
                     avg = sum(self._latency_log) / len(self._latency_log)
                     print(
-                        f"[Pipeline] Queue sizes - "
-                        f"raw:{self.q_audio_raw.qsize()} "
-                        f"clean:{self.q_audio_clean.qsize()} "
-                        f"src_text:{self.q_text_src.qsize()} "
-                        f"results:{self.q_results.qsize()} | "
-                        f"Avg latency: {avg:.0f}ms"
+                        f"[Pipeline] Queue sizes - raw:{self.q_audio_raw.qsize()} "
+                        f"clean:{self.q_audio_clean.qsize()} src_text:{self.q_text_src.qsize()} "
+                        f"results:{self.q_results.qsize()} | Avg latency: {avg:.0f}ms"
                     )
         except KeyboardInterrupt:
             self.capture.stop()
@@ -277,17 +252,24 @@ class OneVoicePipeline:
                 print(f"\nSRT subtitle saved: {srt_path}")
             print("\nOneVoice Edge stopped.")
 
+    @staticmethod
+    def _put_drop_oldest(target_queue: queue.Queue, item):
+        if target_queue.full():
+            try:
+                target_queue.get_nowait()
+                target_queue.task_done()
+            except queue.Empty:
+                pass
+        target_queue.put(item)
 
-if __name__ == "__main__":
+
+def main():
     parser = argparse.ArgumentParser(description="OneVoice Edge real-time VI<->EN speech translation")
     parser.add_argument("--config", default="config/config.yaml")
-    parser.add_argument(
-        "--direction",
-        choices=["vi2en", "en2vi"],
-        default="vi2en",
-        help="Translation direction: vi2en or en2vi",
-    )
+    parser.add_argument("--direction", choices=["vi2en", "en2vi"], default="vi2en")
     args = parser.parse_args()
+    OneVoicePipeline(config_path=args.config, direction=args.direction).start()
 
-    pipeline = OneVoicePipeline(config_path=args.config, direction=args.direction)
-    pipeline.start()
+
+if __name__ == "__main__":
+    main()

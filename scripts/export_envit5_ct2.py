@@ -2,7 +2,8 @@
 Export VietAI/envit5-translation to CTranslate2 for faster local inference.
 
 Run from the repo root:
-    conda run -n aic python scripts/export_envit5_ct2.py --quantization int8
+    conda activate onevoice
+    python scripts/export_envit5_ct2.py --quantization int8
 """
 
 from __future__ import annotations

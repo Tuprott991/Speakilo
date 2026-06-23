@@ -24,6 +24,7 @@ let streaming = false;
 let lastResult = null;
 let busy = false;
 let entryIndex = 0;
+let scrollPending = false;
 
 async function pollStatus() {
   try {
@@ -98,7 +99,7 @@ async function startStreaming() {
   };
 
   sourceNode = audioContext.createMediaStreamSource(mediaStream);
-  processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+  processorNode = audioContext.createScriptProcessor(2048, 1, 1);
   muteNode = audioContext.createGain();
   muteNode.gain.value = 0;
   processorNode.onaudioprocess = (event) => {
@@ -118,9 +119,9 @@ async function startStreaming() {
 
   streaming = true;
   recordBtn.classList.add("recording");
-  recordIcon.textContent = "■";
+  recordIcon.textContent = "II";
   latencyLine.textContent = "";
-  stateText.textContent = "Live translating";
+  stateText.textContent = "Listening";
 }
 
 function stopStreaming() {
@@ -149,7 +150,7 @@ function stopStreaming() {
   ws = null;
 
   recordBtn.classList.remove("recording");
-  recordIcon.textContent = "Ⅱ";
+  recordIcon.textContent = "Mic";
   stateText.textContent = "Live translating";
 }
 
@@ -158,7 +159,7 @@ function handleStreamMessage(event) {
     const message = JSON.parse(event.data);
     if (message.type === "result" && message.data?.translated_text) {
       renderResult(message.data);
-      stateText.textContent = "Live translating";
+      stateText.textContent = streaming ? "Listening" : "Live translating";
     } else if (message.type === "segment" && message.status === "processing") {
       stateText.textContent = "Translating segment";
     } else if (message.type === "segment" && message.status === "dropped") {
@@ -166,7 +167,7 @@ function handleStreamMessage(event) {
     } else if (message.type === "error") {
       latencyLine.textContent = message.detail || "Stream error";
     } else if (message.type === "ready") {
-      stateText.textContent = "Live translating";
+      stateText.textContent = streaming ? "Listening" : "Live translating";
     }
   } catch (err) {
     latencyLine.textContent = String(err.message || err);
@@ -192,7 +193,7 @@ sendTextBtn.addEventListener("click", async () => {
     latencyLine.textContent = "";
   } finally {
     busy = false;
-    stateText.textContent = "Live translating";
+    stateText.textContent = streaming ? "Listening" : "Live translating";
   }
 });
 
@@ -228,7 +229,7 @@ speakBtn.addEventListener("click", async () => {
   } finally {
     busy = false;
     speakBtn.classList.remove("active");
-    stateText.textContent = "Live translating";
+    stateText.textContent = streaming ? "Listening" : "Live translating";
   }
 });
 
@@ -241,7 +242,7 @@ function renderResult(data) {
     timing.asr != null ? `ASR ${timing.asr}ms` : null,
     timing.mt != null ? `MT ${timing.mt}ms` : null,
     timing.total != null ? `Total ${timing.total}ms` : null,
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(" | ");
 }
 
 function ensurePlaceholders() {
@@ -266,20 +267,18 @@ function appendTranscriptPair(data) {
     `#${entryIndex}`,
     data.audio_duration_s ? `${data.audio_duration_s}s audio` : null,
     timing.total != null ? `${timing.total}ms` : null,
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(" | ");
 
   sourceStream.appendChild(createEntry(data.source_text || "", meta));
   translatedStream.appendChild(createEntry(data.translated_text || "", meta));
-  scrollToBottom(sourceStream);
-  scrollToBottom(translatedStream);
+  scheduleScroll();
 }
 
 function appendSystemEntry(left, right) {
   clearPlaceholders();
   sourceStream.appendChild(createEntry(left, "system"));
   translatedStream.appendChild(createEntry(right, "system"));
-  scrollToBottom(sourceStream);
-  scrollToBottom(translatedStream);
+  scheduleScroll();
 }
 
 function createEntry(text, meta) {
@@ -295,9 +294,13 @@ function createEntry(text, meta) {
   return entry;
 }
 
-function scrollToBottom(element) {
+function scheduleScroll() {
+  if (scrollPending) return;
+  scrollPending = true;
   requestAnimationFrame(() => {
-    element.scrollTop = element.scrollHeight;
+    sourceStream.scrollTop = sourceStream.scrollHeight;
+    translatedStream.scrollTop = translatedStream.scrollHeight;
+    scrollPending = false;
   });
 }
 
