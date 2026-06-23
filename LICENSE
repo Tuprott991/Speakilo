@@ -1,0 +1,64 @@
+Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+
+Copyright (c) 2026 Team Impact — OneVoice AI Challenge
+
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0
+International License.
+
+Full license: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+You are free to:
+  - Share — copy and redistribute the material in any medium or format
+  - Adapt — remix, transform, and build upon the material
+
+Under the following terms:
+  - Attribution — You must give appropriate credit (see NOTICE below).
+  - NonCommercial — You may NOT use the material for commercial purposes.
+
+-------------------------------------------------------------------------------
+
+NOTICE — Third-Party Components & Attributions
+===============================================
+
+This project builds upon the following open-source works. All rights belong
+to their respective authors. Please comply with each component's license terms
+when using or distributing this software.
+
+1. BetterBox-TTS (TTS Core — Vietnamese)
+   Author  : Dolly VN / ContextBoxAI
+   Source  : https://github.com/nowtranminh1-TTS/BetterBox-TTS
+   License : Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0)
+   Usage   : Vietnamese Text-to-Speech synthesis engine (Trạm 3 — offline TTS)
+   Note    : This component PROHIBITS commercial use. The entire project
+             inherits this restriction.
+
+2. GIPFormer (ASR & Denoising — Vietnamese)
+   Author  : G-Group AI Lab
+   Source  : https://huggingface.co/g-group-ai-lab/gipformer-65M-rnnt
+   License : MIT License
+   Usage   : Efficient Vietnamese speech recognition & noise-robust audio
+             pre-processing (Trạm 0 — Denoise, Trạm 1 — ASR)
+
+3. SenseVoice Small (ASR & Emotion Extraction)
+   Author  : FunAudioLLM / Alibaba
+   Source  : https://github.com/FunAudioLLM/SenseVoice
+   License : MIT License
+   Usage   : Multilingual speech recognition and emotion extraction (Trạm 1 — ASR)
+
+4. envit5-translation (Machine Translation)
+   Author  : VietAI
+   Source  : https://huggingface.co/VietAI/envit5-translation
+   License : MIT License
+   Usage   : Bilingual translation engine (Trạm 2 — VI↔EN)
+
+5. F5-TTS (Voice Cloning)
+   Author  : SWivid
+   Source  : https://github.com/SWivid/F5-TTS
+   License : MIT License
+   Usage   : Zero-shot voice cloning and speech synthesis (Trạm 3 — TTS)
+
+6. Silero VAD (Voice Activity Detection)
+   Author  : Silero Team
+   Source  : https://github.com/snakers4/silero-vad
+   License : MIT License
+   Usage   : Real-time voice activity detection to trigger pipeline processing.

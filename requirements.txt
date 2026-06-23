@@ -1,0 +1,51 @@
+# ── Core ASR ──────────────────────────────────────────────────────────────────
+sherpa-onnx                        # GIPFormer ONNX runtime (VI ASR)
+openai-whisper                     # Whisper (EN ASR, dùng bởi F5-TTS khi transcribe ref audio)
+funasr_onnx                        # SenseVoice ONNX (EN/VI ASR + emotion detection)
+modelscope                         # SenseVoice model loader
+
+# ── Machine Translation ─────────────────────────────────────────────────
+transformers>=4.45.0               # Bản ổn định (tránh lỗi FP8 khi chạy trên PyTorch 2.6.0)
+ctranslate2                         # Fast INT8/CPU runtime for exported envit5
+fastapi                             # Local web PoC
+uvicorn                             # FastAPI dev server
+python-multipart                    # Browser audio uploads
+pydub                               # Decode browser audio containers via FFmpeg
+sounddevice                         # Microphone capture and local playback
+sentencepiece                      # Tokenizer cho VietAI/envit5 (T5 SentencePiece)
+
+# ── Punctuation Restoration ───────────────────────────────────────────────────
+deepmultilingualpunctuation        # kredor/punctuate-all (hỗ trợ tiếng Việt)
+
+# ── TTS ───────────────────────────────────────────────────────────────────────
+f5-tts                             # F5-TTS voice cloning (EN TTS — chính, chạy tốt trên Colab/Linux)
+pyttsx3                            # Fallback TTS cho Windows (dùng Microsoft SAPI5, không cần cài thêm)
+
+# ── Deep Learning ─────────────────────────────────────────────────────────────
+torch
+torchaudio
+torchvision
+
+# ── Audio Processing ──────────────────────────────────────────────────────────
+soundfile                          # Đọc/ghi WAV
+sounddevice                        # Phát audio real-time
+librosa                            # Phân tích audio, time-stretch (speed control)
+pydub                              # Chuyển đổi định dạng audio (mp3→wav)
+pedalboard                         # Audio effects
+
+# ── Infrastructure ────────────────────────────────────────────────────────────
+huggingface_hub                    # Tải model từ HuggingFace Hub
+PyYAML                             # Đọc config.yaml
+numpy
+
+# ── OmniVoice & Text Processing ───────────────────────────────────────────────
+accelerate                         # HuggingFace Accelerate cho GPU inference
+tqdm                               # Progress bars
+unidecode                          # Xử lý text đa ngôn ngữ
+cn2an                              # Text processing cho OmniVoice/F5-TTS
+zhconv                             # Text processing cho OmniVoice/F5-TTS
+zhon                               # Text processing cho OmniVoice/F5-TTS
+webdataset                         # Data loader cho TTS
+sacremoses                         # Tokenizer helper cho Translation/Punctuation
+silero-vad                         # Voice Activity Detection without Torch Hub download
+jieba                              # Required by funasr_onnx tokenization utilities
