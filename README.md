@@ -4,7 +4,7 @@ Local bilingual speech translation for the OneVoice AI Challenge.
 
 
 <!-- Add device image -->
-![SpeaKilo_device.png]
+![SpeaKilo Device Image](SpeaKilo_device.png)
 
 OneVoice Edge is designed as an offline, laptop-to-edge proof of concept:
 
