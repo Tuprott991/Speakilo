@@ -73,7 +73,7 @@ tts:
     enabled: true
     version: "0.9.4"
     onnx_version: "1.0-int8"
-    backend: "pytorch"
+    backend: "onnxruntime"
     package_dir: "app/tts/Kokoro-Vietnamese/kokoro"
     repo_id: "hexgrad/Kokoro-82M"
     onnx_model_path: "models/kokoro-onnx/model.onnx"
