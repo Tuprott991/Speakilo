@@ -42,11 +42,12 @@ def download_gipformer():
 
 
 def download_sensevoice():
-    print("\n[2/3] Downloading SenseVoiceSmall (EN/VI ASR)...")
+    print("\n[2/3] Downloading quantized SenseVoiceSmall ONNX (English ASR)...")
     try:
         from modelscope import snapshot_download
-        model_dir = snapshot_download('iic/SenseVoiceSmall')
-        print(f"  ✅ SenseVoiceSmall loaded and cached at {model_dir}")
+        out_dir = os.path.join(MODELS_DIR, "sensevoice-small-onnx")
+        model_dir = snapshot_download("iic/SenseVoiceSmall-onnx", local_dir=out_dir)
+        print(f"  ✅ SenseVoiceSmall ONNX loaded at {model_dir}")
     except Exception as e:
         print(f"  ⚠ SenseVoice download failed: {e}")
 
@@ -86,4 +87,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"  ❌ Envit5 download failed: {e}")
 
-    print("\n✅ Setup complete. Run: python src/pipeline.py --direction vi2en")
+    print("\n✅ Setup complete. Run: python app/pipeline.py --direction vi2en")

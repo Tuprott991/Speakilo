@@ -8,35 +8,96 @@ __pycache__/
 dist/
 build/
 *.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 venv/
 .venv/
 env/
 
-# Jupyter Notebooks checkpoints
+# Jupyter
 .ipynb_checkpoints/
 
-# Model weights (too large for git — use Git LFS or HuggingFace Hub)
+# Model weights and exported runtimes
 *.pt
 *.pth
 *.bin
+*.t7
+*.ckpt
+*.safetensors
 *.gguf
 *.onnx
+*.onnx.data
 *.tflite
 *.qnn
-
-# Qualcomm compiled models
+*.engine
+*.plan
+*.mlmodel
+*.ort
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.joblib
+/models/
 quantized_models/
 
-# Downloaded HuggingFace cache
+# Download and model caches
 ~/.cache/huggingface/
+**/.cache/huggingface/
+**/.cache/modelscope/
+**/._____temp/
+*.download
+*.incomplete
+*.lock
 
-# Audio data (use DVC or separate storage)
+# Audio datasets, local samples, and generated media
 data/raw_audio/
 data/calibration/*.wav
+/data/synthetic_dataset_*.csv
+/Nobita.wav
+/wavs/
+/app/tts/presets/*.wav
+**/outputs/
+**/gradio_cache/
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.mp4
+*.srt
 
-# API Keys / secrets
+# Large downloaded archives
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# Local Kokoro training artifacts
+app/tts/Kokoro-Vietnamese/StyleTTS2/Utils/ASR/*.pth
+app/tts/Kokoro-Vietnamese/StyleTTS2/Utils/JDC/*.t7
+app/tts/Kokoro-Vietnamese/StyleTTS2/Utils/PLBERT/*.t7
+app/tts/Kokoro-Vietnamese/StyleTTS2/logs/
+app/tts/Kokoro-Vietnamese/dataset*/
+app/tts/Kokoro-Vietnamese/training/mels/
+app/tts/Kokoro-Vietnamese/training/f0/
+
+# Generated demos, reports, logs, and profiling
+output*
+demo_outputs/
+reports/
+benchmarks/
+profiles/
+logs/
+uvicorn-onevoice*.log
+*.prof
+*.trace
+
+# API keys and secrets
 .env
 *.env
 config/secrets.yaml
@@ -48,8 +109,3 @@ config/secrets.yaml
 # OS
 .DS_Store
 Thumbs.db
-output*
-demo_outputs/
-
-# Local server verification logs
-uvicorn-onevoice*.log

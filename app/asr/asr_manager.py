@@ -10,6 +10,7 @@ nhờ khả năng nhận diện siêu nhanh và trích xuất nhãn cảm xúc.
 
 import time
 import queue
+import threading
 import numpy as np
 from huggingface_hub import hf_hub_download
 
@@ -102,10 +103,16 @@ class ASRManager:
         )
         self._en_asr = SenseVoiceASR(config)
         self._loaded = False
+        self._lock = threading.Lock()
 
     def load(self):
         self._vi_asr.load()
-        # SenseVoice load occurs during init, but we ensure it's ready here
+        if self.cfg.get("sensevoice", {}).get("preload", True):
+            if not self._en_asr.load():
+                raise RuntimeError(
+                    "EN->VI ASR failed to load: "
+                    f"{self._en_asr.load_error or 'unknown SenseVoice error'}"
+                )
         self._loaded = True
 
     def transcribe(self, audio: np.ndarray, direction: str = "vi2en") -> dict:
@@ -119,7 +126,8 @@ class ASRManager:
             raise RuntimeError("ASRManager not loaded. Call .load() first.")
 
         if direction == "vi2en":
-            result = self._vi_asr.transcribe(audio)
+            with self._lock:
+                result = self._vi_asr.transcribe(audio)
             return {
                 "text": result["text"], 
                 "emotion": result["emotion"], 
@@ -128,7 +136,8 @@ class ASRManager:
                 "direction": "vi2en"
             }
         else:
-            result = self._en_asr.transcribe(audio, sample_rate=16000)
+            with self._lock:
+                result = self._en_asr.transcribe(audio, sample_rate=16000)
             return {
                 "text": result["text"], 
                 "emotion": result["emotion"], 

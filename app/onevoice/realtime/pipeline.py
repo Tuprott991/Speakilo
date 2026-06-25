@@ -217,12 +217,13 @@ class OneVoicePipeline:
         try:
             while time.perf_counter() < deadline:
                 remaining = max(0.05, deadline - time.perf_counter())
-                item = self.q_results.get(timeout=min(0.25, remaining))
+                try:
+                    item = self.q_results.get(timeout=min(0.25, remaining))
+                except queue.Empty:
+                    continue
                 if request_id is None or item.get("request_id") == request_id:
                     return item
                 parked.append(item)
-        except queue.Empty:
-            pass
         finally:
             for item in parked:
                 self._put_drop_oldest(self.q_results, item)

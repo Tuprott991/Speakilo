@@ -182,9 +182,13 @@ h1 {
   font-weight: 700;
 }
 
-.speaker.active {
+.speaker.enabled {
   color: var(--text);
   background: #285174;
+}
+
+.speaker.speaking {
+  box-shadow: 0 0 0 3px rgba(86, 171, 255, 0.18);
 }
 
 .speaker-icon {
@@ -266,6 +270,15 @@ h1 {
   color: var(--subtle);
   font-size: 13px;
   font-weight: 700;
+}
+
+.partial-entry .entry-text {
+  color: var(--muted);
+  opacity: 0.58;
+}
+
+.partial-entry .entry-meta {
+  color: var(--subtle);
 }
 
 @keyframes entry-in {

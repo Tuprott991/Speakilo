@@ -2,7 +2,7 @@ import sys
 import os
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../app"))
 
 from translation.mt_engine import Translator
 from tts.tts_engine import TTSEngine

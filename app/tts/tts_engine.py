@@ -1,485 +1,435 @@
-"""
-Trạm 3: Text-to-Speech Engine (VI ↔ EN)
-=========================================
-Routes TTS output based on translation direction:
-  - VI output (EN→VI direction): OmniVoice / BetterBox-TTS
-  - EN output (VI→EN direction): Whisper-based English TTS / VITS-tiny
+"""Text-to-speech router for OneVoice.
 
-Premium Mode (Voice Cloning):
-  - VALL-E X (activated when device has sufficient resources)
-  - Preserves speaker voice identity across languages
-
-References:
-  BetterBox-TTS — Dolly VN / ContextBoxAI (CC BY-NC 4.0)
-    https://github.com/nowtranminh1-TTS/BetterBox-TTS
-  VALL-E X — Plachtaa / Songting (MIT License)
-    https://github.com/Plachtaa/VALL-E-X
+The realtime translation path does not wait for TTS. This router loads Kokoro
+lazily or through background warmup and serves queued committed translations
+while the UI Voice toggle is enabled.
 """
 
-import time
-import queue
-import sys
+from __future__ import annotations
+
+import json
+import gc
 import os
+import platform
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Optional
+
 import numpy as np
 import sounddevice as sd
 
+from .kokoro_runtime import (
+    KokoroEnglishOnnxRuntime,
+    KokoroEnglishRuntime,
+    KokoroVietnameseRuntime,
+    SynthesisResult,
+)
+
 
 class TTSEngine:
-    """
-    Text-to-Speech router for VI↔EN pipeline.
+    """Direction-aware TTS router.
 
-    Routing:
-      "vi2en" direction → output is English → English TTS (VITS/espeak)
-      "en2vi" direction → output is Vietnamese → OmniVoice/BetterBox
+    direction="vi2en" means translated output is English.
+    direction="en2vi" means translated output is Vietnamese.
     """
 
     def __init__(self, config: dict):
-        self.cfg = config["tts"]
-        self.sample_rate = config["audio"]["sample_rate"]
-        self.default_engine = self.cfg.get("default_engine", "betterbox")
-        self.en_speed = float(self.cfg.get("en_speed", 0.85))
-        # Voice preset: a pre-recorded natural EN voice as reference (preferred over live cloning)
-        self.en_preset_audio = self.cfg.get("en_preset_audio", None)
-        self.en_preset_text  = self.cfg.get("en_preset_text",  None)
-        self._omni = None          # OmniVoice for Vietnamese TTS
-        self._en_tts = None        # English TTS engine
-        self._vallex = None        # VALL-E X (Premium Mode)
+        self.cfg = config.get("tts", {})
+        self.sample_rate = int(config.get("audio", {}).get("sample_rate", 16000))
+        self.vi_engine = self.cfg.get("vi_engine", "kokoro")
+        self.en_engine = self.cfg.get("en_engine", "kokoro")
+        self._kokoro_vi: Optional[KokoroVietnameseRuntime] = None
+        self._kokoro_en: Optional[KokoroEnglishRuntime] = None
+        self._kokoro_en_onnx: Optional[KokoroEnglishOnnxRuntime] = None
+        self._kokoro_en_onnx_failed = False
+        self._active_en_backend = "unloaded"
+        self._en_selection_source = "none"
+        self._active_output_language: str | None = None
+        self._pyttsx3 = None
+        self._loaded = False
+        self._lock = threading.RLock()
+        self.last_metrics: dict[str, float | str] = {}
 
-    def load(self):
-        """Initialize all TTS backends."""
-        print(f"[TTS] Initializing engines...")
-        self._load_omnivoice()
-        self._load_english_tts()
-        self._auto_prepare_preset()   # Tự động chuẩn bị giọng mẫu tiếng Anh
-        print("[TTS] ✅ TTS Engine ready.")
+    def load(self) -> None:
+        """Prepare configured TTS engines.
 
-    def _apply_speed(self, audio: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
+        Callers can run this in a background thread to hide first-click latency.
+        If an optional engine fails, synthesis still falls back gracefully.
         """
-        Apply speed adjustment to audio using librosa time stretching.
-        self.en_speed < 1.0 = slower (easier to listen), > 1.0 = faster.
-        """
-        if abs(self.en_speed - 1.0) < 0.02:  # Skip if essentially 1.0
-            return audio, sr
-        try:
-            import librosa
-            # time_stretch rate: > 1.0 speeds up, < 1.0 slows down
-            # We invert because en_speed=0.8 means "play at 80% speed" = stretch by 1/0.8
-            stretch_rate = self.en_speed
-            audio_stretched = librosa.effects.time_stretch(audio, rate=stretch_rate)
-            return audio_stretched.astype(np.float32), sr
-        except Exception as e:
-            print(f"[TTS EN] ⚠ Speed adjustment failed: {e}")
-            return audio, sr
-
-    def _auto_prepare_preset(self):
-        """
-        Tự động chuẩn bị file giọng mẫu tiếng Anh khi load().
-        Không cần chạy script riêng. Thứ tự ưu tiên:
-          1. File đã tồn tại sẵn → dùng ngay (không làm gì thêm).
-          2. F5-TTS built-in reference (có sẵn trong Colab khi cài f5-tts).
-          3. Tạo bằng gTTS (cần internet, fallback).
-        """
-        if not self.en_preset_audio:
-            return   # Không cấu hình preset → bỏ qua
-
-        if os.path.exists(self.en_preset_audio):
-            print(f"[TTS] 🎤 Voice preset ready: {os.path.basename(self.en_preset_audio)}")
-            return   # Đã có sẵn rồi, không cần tải lại
-
-        # Đảm bảo thư mục tồn tại
-        os.makedirs(os.path.dirname(self.en_preset_audio), exist_ok=True)
-
-        # ── Phương án 1: F5-TTS built-in reference (nhanh nhất, 0 download, đa nền tảng) ──
-        try:
-            import f5_tts
-            f5_dir = f5_tts.__path__[0]
-            builtin = os.path.join(f5_dir, "infer", "examples", "basic", "basic_ref_en.wav")
-            if os.path.exists(builtin):
-                import shutil
-                shutil.copy(builtin, self.en_preset_audio)
-                
-                # Update preset text to match F5-TTS built-in transcript
-                txt_path = self.en_preset_audio.replace(".wav", ".txt")
-                f5_text = "Some call me nature, others call me mother nature."
-                with open(txt_path, "w", encoding="utf-8") as f:
-                    f.write(f5_text)
-                self.en_preset_text = f5_text
-                print(f"[TTS] 🎤 Voice preset: sử dụng F5-TTS built-in reference.")
+        with self._lock:
+            if self._loaded:
                 return
-        except ImportError:
-            pass
+            start = time.perf_counter()
+            print("[TTS] Preparing latency-aware TTS engines...")
 
-        # ── Phương án 2: gTTS (cần internet, fallback cho lần đầu) ─────────
-        try:
-            from gtts import gTTS
-            from pydub import AudioSegment
-            import tempfile
-            ref_text = "Attention all site personnel. Please proceed to the designated safety zone immediately. Thank you."
-            print(f"[TTS] 🌐 Đang tạo voice preset lần đầu bằng gTTS (chỉ cần 1 lần)...")
-            tts = gTTS(text=ref_text, lang="en", slow=False, tld="com")
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                mp3_path = tmp.name
-            tts.save(mp3_path)
-            seg = AudioSegment.from_mp3(mp3_path)
-            seg = seg[:9000]  # 9 giây đầu
-            seg.export(self.en_preset_audio, format="wav")
-            os.unlink(mp3_path)
-            self.en_preset_text = ref_text
-            txt_path = self.en_preset_audio.replace(".wav", ".txt")
-            with open(txt_path, "w") as f:
-                f.write(ref_text)
-            print(f"[TTS] ✅ Voice preset đã được tạo tự động: {self.en_preset_audio}")
-        except Exception as e:
-            print(f"[TTS] ⚠ Không tạo được voice preset ({e}). Sẽ dùng voice cloning từ input audio.")
-            self.en_preset_audio = None   # Reset để _get_en_reference() fallback sang clone
+            self.prepare(self.cfg.get("preload_direction", "vi2en"))
 
-    def _load_omnivoice(self):
-        """
-        Load OmniVoice (BetterBox-TTS) for Vietnamese speech synthesis.
-        Uses local port inside src/tts/omnivoice_inference/
-        """
-        try:
-            # Ensure src/tts is in sys.path so 'omnivoice' and 'omnivoice_inference' resolve correctly
-            tts_dir = os.path.dirname(os.path.abspath(__file__))
-            if tts_dir not in sys.path:
-                sys.path.insert(0, tts_dir)
+            self._loaded = True
+            print(f"[TTS] TTS ready in {time.perf_counter() - start:.1f}s")
 
-            from omnivoice_inference.ttsOmni import Omni, generate_speech_omni
-            
-            model_path = self.cfg.get("betterbox", {}).get(
-                "model_path", os.path.join("models", "omnivoice")
-            )
-            if not os.path.exists(model_path):
-                print(f"[TTS] ⚠ Thư mục '{model_path}' không tồn tại. Đang tự động tải mô hình từ 'splendor1811/omnivoice-vietnamese' để test tạm...")
-                model_path = "splendor1811/omnivoice-vietnamese"
+    @property
+    def loaded(self) -> bool:
+        return self._loaded
 
-            self._omni = Omni(model_path=model_path)
-            self._generate_speech_omni = generate_speech_omni
-            
-            # ── Auto-generate VI reference audio if missing ──
-            wavs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "omnivoice_inference", "wavs")
-            # If the user didn't create a 'wavs' folder in the root, create one locally
-            root_wavs = "wavs"
-            if not os.path.exists(root_wavs):
-                os.makedirs(root_wavs, exist_ok=True)
-            
-            ref_path = os.path.join(root_wavs, "reference_sound.wav")
-            if not os.path.exists(ref_path):
-                # Ưu tiên sử dụng Nobita.wav do người dùng cung cấp
-                nobita_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "Nobita.wav")
-                # Normalize path
-                nobita_path = os.path.abspath(nobita_path)
-                
-                if os.path.exists(nobita_path):
-                    print(f"[TTS VI] 🌐 Tìm thấy file {nobita_path}, đang copy làm voice preset...")
-                    import shutil
-                    shutil.copy(nobita_path, ref_path)
-                    
-                    # Tạo file txt chứa transcript để OmniVoice không phải gọi mô hình nhận diện giọng nói (ASR)
-                    # (tránh lỗi thiếu thư viện chunkformer)
-                    ref_text_path = ref_path.replace(".wav", ".txt")
-                    with open(ref_text_path, "w", encoding="utf-8") as f:
-                        f.write("Cậu đã làm dì dới nó dở. Thêm năng lượng hả. Nó quạt động như thế nào dợ. Cho mình mượn chúc, đừng có keo kiệt dậy chứ. Hôm nai lớp mình có bài kiểm tra môn thể dục nên mình rất là cần nó luôn. Sài xong mình trả lại liền.")
-                        
-                    print(f"[TTS VI] ✅ Voice preset tiếng Việt đã được tạo từ Nobita.wav: {ref_path}")
-                else:
-                    print(f"[TTS VI] 🌐 Đang tạo voice preset tiếng Việt bằng gTTS (chỉ cần 1 lần)...")
-                    try:
-                        from gtts import gTTS
-                        from pydub import AudioSegment
-                        import tempfile
-                        # Một câu tiếng Việt chuẩn, rõ ràng để làm mẫu giọng
-                        ref_text = "Chào mừng bạn đến với hệ thống OneVoice. Hệ thống đã sẵn sàng."
-                        tts = gTTS(text=ref_text, lang="vi", slow=False, tld="com.vn")
-                        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                            mp3_path = tmp.name
-                        tts.save(mp3_path)
-                        seg = AudioSegment.from_mp3(mp3_path)
-                        seg.export(ref_path, format="wav")
-                        os.unlink(mp3_path)
-                        # Create txt file too
-                        with open(ref_path.replace(".wav", ".txt"), "w", encoding="utf-8") as f:
-                            f.write(ref_text)
-                        print(f"[TTS VI] ✅ Voice preset tiếng Việt đã được tạo: {ref_path}")
-                    except Exception as e:
-                        print(f"[TTS VI] ⚠ Không tạo được voice preset ({e})")
-                    
-            print(f"[TTS] ✅ OmniVoice loaded from: {self._omni.model_path}")
-        except Exception as e:
-            print(f"[TTS] ⚠ Failed to load OmniVoice: {e}")
-            self._omni = None
-
-    def _load_english_tts(self):
-        """
-        Load lightweight English TTS.
-        Priority: VITS-ONNX → XTTS v2 (voice clone) → pyttsx3 → gTTS
-        """
-        vits_path = self.cfg.get("vits", {}).get("model_path", "models/vits_en_tiny.onnx")
-        if os.path.exists(vits_path):
-            try:
-                import onnxruntime as ort
-                self._en_tts = ort.InferenceSession(
-                    vits_path, providers=["CPUExecutionProvider"]
-                )
-                self._en_tts_engine = "vits"
-                print(f"[TTS] ✅ VITS English TTS loaded from: {vits_path}")
-                return
-            except Exception as e:
-                print(f"[TTS] ⚠ VITS load failed: {e}")
-
-        # Priority 2: F5-TTS — voice cloning (Python 3.10+, offline, GPU)
-        try:
-            if os.name == 'nt':
-                # Fix DLL loading for torchcodec/ffmpeg on Windows Conda (Python 3.8+)
-                conda_prefix = os.environ.get("CONDA_PREFIX")
-                if conda_prefix:
-                    bin_path = os.path.join(conda_prefix, "Library", "bin")
-                    if os.path.exists(bin_path):
-                        try:
-                            os.add_dll_directory(bin_path)
-                        except AttributeError:
-                            pass
-            from f5_tts.api import F5TTS
-            self._en_tts = F5TTS()
-            self._en_tts_engine = "f5tts"
-            print("[TTS] ✅ F5-TTS loaded (voice cloning enabled).")
-            return
-        except Exception as e:
-            print(f"[TTS] ⚠ F5-TTS not available ({e})")
-
-        # Priority 3: pyttsx3 (offline, no voice clone)
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 160)
-            self._en_tts = engine
-            self._en_tts_engine = "pyttsx3"
-            print("[TTS] ✅ pyttsx3 English TTS loaded (fallback).")
-            return
-        except Exception as e:
-            print(f"[TTS] ⚠ pyttsx3 not available ({e})")
-
-        # Priority 4: gTTS (internet, no voice clone, Colab test only)
-        try:
-            from gtts import gTTS
-            self._en_tts = "gtts"
-            self._en_tts_engine = "gtts"
-            print("[TTS] ✅ gTTS English TTS loaded (online fallback for Colab).")
-            return
-        except ImportError:
-            pass
-
-        print("[TTS] ⚠ No English TTS available — using silence stub.")
-
-    def synthesize_vi(self, text: str, emotion: str = "neutral") -> np.ndarray:
-        """
-        Synthesize Vietnamese speech using OmniVoice (BetterBox-TTS).
-        Called for EN→VI direction (speaker heard Vietnamese output).
-        Maps emotion to OmniVoice `instruct` prompt.
-        """
-        # ── Emotion Routing ──────────────────────────────────────────────────
-        emotion_map = {
-            "happy": "happy, high pitch, bright",
-            "sad": "sad, low pitch, slow, quiet",
-            "angry": "angry, fast, loud, high pitch",
-            "fearful": "fearful, fast, trembling",
-            "disgusted": "disgusted, low pitch",
-            "surprised": "surprised, high pitch, fast",
-            "neutral": ""
-        }
-        instruct = emotion_map.get(emotion.lower(), "")
-        if instruct:
-            print(f"[TTS VI] 🎭 Applied emotion routing: {emotion.upper()}")
-
-        if self._omni is not None:
-            try:
-                t0 = time.perf_counter()
-                # Use default reference audio if available
-                ref_audio = self.cfg.get("betterbox", {}).get("reference_audio", None)
-                ref_text = None
-                
-                if ref_audio is None:
-                    # Look for the auto-generated reference in the root wavs folder
-                    fallback_ref = os.path.join("wavs", "reference_sound.wav")
-                    if os.path.exists(fallback_ref):
-                        ref_audio = fallback_ref
-                        fallback_txt = fallback_ref.replace(".wav", ".txt")
-                        if os.path.exists(fallback_txt):
-                            with open(fallback_txt, "r", encoding="utf-8") as f:
-                                ref_text = f.read().strip()
-                
-                # We monkey-patch the wrapper slightly or pass instruct down
-                # Currently generate_speech_omni doesn't take instruct in our port?
-                # Let's check our ported ttsOmni.py -> generate_speech_omni
-                # Oh wait, we need to pass instruct to generate_speech_omni!
-                # I will also update generate_speech_omni in ttsOmni.py to accept instruct.
-                result, status, _ = self._generate_speech_omni(
-                    omni=self._omni,
-                    text=text,
-                    language="vi",
-                    reference_audio=ref_audio,
-                    ref_text=ref_text,
-                    speed=self.cfg.get("betterbox", {}).get("speed", 1.0),
-                    instruct=instruct  # Newly added
-                )
-                if result is not None:
-                    sr, audio = result
-                    elapsed_ms = (time.perf_counter() - t0) * 1000
-                    print(f"[TTS VI] ⏱ {elapsed_ms:.0f}ms | {status}")
-                    return audio.astype(np.float32), sr
-                else:
-                    print(f"[TTS VI] ⚠ OmniVoice failed: {status}")
-            except Exception as e:
-                print(f"[TTS VI] ⚠ OmniVoice error: {e}")
-
-        # Stub: silence
-        return np.zeros(int(self.sample_rate * 0.5), dtype=np.float32), self.sample_rate
-
-    def _get_en_reference(self, fallback_wav: str = None, fallback_text: str = None) -> tuple:
-        """
-        Return (ref_audio_path, ref_text) for F5-TTS.
-        Priority:
-          1. Configured voice preset (en_preset_audio) — clean, natural, studio voice.
-          2. Live voice cloning from input audio (fallback_wav) — may have noise.
-        """
-        # Priority 1: configured preset
-        if self.en_preset_audio and os.path.exists(self.en_preset_audio):
-            print(f"[TTS EN] 🎤 Using voice preset: {os.path.basename(self.en_preset_audio)}")
-            return self.en_preset_audio, self.en_preset_text or ""
-
-        # Priority 2: live reference trimmed to 10s
-        if fallback_wav and os.path.exists(fallback_wav):
-            print(f"[TTS EN] 🎤 No preset found — falling back to voice cloning from input audio")
-            import soundfile as sf, tempfile
-            audio_data, sr_data = sf.read(fallback_wav)
-            if len(audio_data.shape) > 1:
-                audio_data = audio_data.mean(axis=1)
-            max_samples = 10 * sr_data
-            if len(audio_data) > max_samples:
-                print(f"[TTS EN] ✂️ Trimming reference audio to 10.0s")
-                audio_data = audio_data[:max_samples]
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                sf.write(tmp.name, audio_data, sr_data)
-                return tmp.name, fallback_text or ""
-
-        return None, ""
-
-    # ── English TTS Synthesis ─────────────────────────────────────────────────
-    # Fallback chain (ưu tiên từ trên xuống):
-    #   1. F5-TTS   — Voice cloning chất lượng cao (CHÍNH, hoạt động trên Colab/Linux)
-    #   2. pyttsx3  — Microsoft SAPI5 (DỰ PHÒNG, chỉ dùng khi F5-TTS lỗi trên Windows)
-    #   3. Silence  — Không có engine nào khả dụng
-    #
-    # Trên Colab/Linux: F5-TTS luôn thành công → KHÔNG BAO GIỜ fallback
-    # Trên Windows:     F5-TTS lỗi torchcodec → tự động chuyển sang pyttsx3
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def synthesize_en(self, text: str, reference_wav: str = None, original_text: str = None) -> tuple[np.ndarray, int]:
-        """
-        Synthesize English speech.
-
-        Fallback chain:
-          1. F5-TTS (voice cloning, high quality) — primary engine
-          2. pyttsx3 (Microsoft SAPI5) — Windows fallback only
-          3. Silence stub — last resort
-        """
-        t0 = time.perf_counter()
-        engine = getattr(self, "_en_tts_engine", None)
-
-        # ── [1] F5-TTS (Primary — Colab/Linux) ──────────────────────────────
-        if engine == "f5tts":
-            try:
-                import torch
-                ref_file, ref_text = self._get_en_reference(
-                    fallback_wav=reference_wav,
-                    fallback_text=original_text,
-                )
-                if ref_file is None:
-                    raise ValueError("No reference audio available for F5-TTS")
-
-                wav, sr, _ = self._en_tts.infer(
-                    ref_file=ref_file,
-                    ref_text=ref_text,
-                    gen_text=text,
-                    speed=self.en_speed,
-                )
-                # Clean up temp file if it was created by fallback
-                if ref_file != self.en_preset_audio and os.path.exists(ref_file):
-                    try: os.unlink(ref_file)
-                    except: pass
-
-                audio = wav.numpy() if torch.is_tensor(wav) else wav
-                elapsed_ms = (time.perf_counter() - t0) * 1000
-                print(f"[TTS EN] ⏱ {elapsed_ms:.0f}ms | F5-TTS (speed={self.en_speed})")
-                return audio.astype(np.float32), sr
-            except Exception as e:
-                print(f"[TTS EN] ⚠ F5-TTS inference failed: {e}")
-                print(f"[TTS EN] ↓ Falling back to pyttsx3...")
-
-        # ── [2] pyttsx3 (Fallback — Windows) ─────────────────────────────────
-        try:
-            import pyttsx3
-            import tempfile, soundfile as sf
-            _fallback_engine = pyttsx3.init()
-            _fallback_engine.setProperty("rate", int(160 * self.en_speed))
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp_path = tmp.name
-            _fallback_engine.save_to_file(text, tmp_path)
-            _fallback_engine.runAndWait()
-            audio, sr = sf.read(tmp_path, dtype="float32")
-            os.unlink(tmp_path)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            print(f"[TTS EN] ⏱ {elapsed_ms:.0f}ms | pyttsx3 fallback (rate={int(160 * self.en_speed)} WPM)")
-            return audio, sr
-        except Exception as e:
-            print(f"[TTS EN] ⚠ pyttsx3 fallback failed: {e}")
-
-        # ── [3] Silence stub (last resort) ───────────────────────────────────
-        print("[TTS EN] ⚠ No English TTS engine available — returning silence.")
-        return np.zeros(int(self.sample_rate * 0.5), dtype=np.float32), self.sample_rate
-
-    def synthesize(self, text: str, direction: str = "vi2en", emotion: str = "neutral", reference_wav: str = None, original_text: str = None) -> tuple[np.ndarray, int]:
-        """
-        Route synthesis based on direction.
-
-        Args:
-            text: Text to speak (already translated)
-            direction: "vi2en" → output EN speech | "en2vi" → output VI speech
-            emotion: Emotion tag from SenseVoice (e.g. "angry")
-            reference_wav: Path to original input audio for voice cloning
-            original_text: The original ASR text from Trạm 1 (used for F5-TTS ref_text)
-
-        Returns:
-            (audio_array, sample_rate)
-        """
+    def synthesize(
+        self,
+        text: str,
+        direction: str = "vi2en",
+        emotion: str = "neutral",
+        reference_wav: str | None = None,
+        original_text: str | None = None,
+    ) -> tuple[np.ndarray, int]:
+        del reference_wav, original_text
         if direction == "en2vi":
             return self.synthesize_vi(text, emotion=emotion)
-        else:
-            return self.synthesize_en(text, reference_wav=reference_wav, original_text=original_text)
+        return self.synthesize_en(text)
 
-    def play(self, audio: np.ndarray, sample_rate: int = None):
-        """Play synthesized audio through the speaker."""
+    def synthesize_vi(self, text: str, emotion: str = "neutral") -> tuple[np.ndarray, int]:
+        del emotion
+        if self.vi_engine == "kokoro" and self.cfg.get("kokoro_vi", {}).get("enabled", True):
+            try:
+                self._activate_output_language("vi", warmup=False)
+                result = self._ensure_kokoro_vi().synthesize(text)
+                self._log_result(result, text)
+                return self._nonempty(result.audio), result.sample_rate
+            except Exception as exc:
+                print(f"[TTS VI] Kokoro failed: {exc}")
+
+        print("[TTS VI] No Vietnamese TTS available; returning short silence.")
+        return self._silence()
+
+    def synthesize_en(self, text: str) -> tuple[np.ndarray, int]:
+        if self.en_engine == "kokoro" and self.cfg.get("kokoro_en", {}).get("enabled", True):
+            self._activate_output_language("en", warmup=False)
+            if (
+                not self._kokoro_en_onnx_failed
+                and self._active_en_backend == "onnx_int8"
+            ):
+                try:
+                    result = self._ensure_kokoro_en_onnx().synthesize(text)
+                    self._log_result(result, text)
+                    return self._nonempty(result.audio), result.sample_rate
+                except Exception as exc:
+                    self._kokoro_en_onnx_failed = True
+                    if self.cfg.get("kokoro_en", {}).get("backend") == "onnx":
+                        print(f"[TTS EN] Kokoro ONNX failed: {exc}")
+                    else:
+                        print(f"[TTS EN] Kokoro ONNX unavailable; using PyTorch: {exc}")
+            try:
+                result = self._ensure_kokoro_en().synthesize(text)
+                self._log_result(result, text)
+                return self._nonempty(result.audio), result.sample_rate
+            except Exception as exc:
+                print(f"[TTS EN] Kokoro failed: {exc}")
+
+        return self._synthesize_en_pyttsx3(text)
+
+    def prepare(self, direction: str) -> None:
+        output_language = "vi" if direction == "en2vi" else "en"
+        self._activate_output_language(output_language, warmup=self.cfg.get("warmup", True))
+
+    def runtime_status(self) -> dict:
+        try:
+            import torch
+
+            torch_threads = torch.get_num_threads()
+            cuda_available = torch.cuda.is_available()
+            cuda_device = torch.cuda.get_device_name(0) if cuda_available else None
+            cuda_memory_mb = (
+                round(torch.cuda.memory_allocated(0) / (1024 * 1024), 1)
+                if cuda_available
+                else 0
+            )
+        except Exception:
+            torch_threads = None
+            cuda_available = False
+            cuda_device = None
+            cuda_memory_mb = 0
+        return {
+            "english_backend": self._active_en_backend,
+            "english_selection_source": self._en_selection_source,
+            "english_voice": self.cfg.get("kokoro_en", {}).get("voice"),
+            "english_device": (
+                self._kokoro_en.device if self._kokoro_en is not None else "unloaded"
+            ),
+            "vietnamese_backend": "pytorch",
+            "vietnamese_voice": self.cfg.get("kokoro_vi", {}).get("voice"),
+            "vietnamese_device": (
+                self._kokoro_vi.device if self._kokoro_vi is not None else "unloaded"
+            ),
+            "active_output_language": self._active_output_language,
+            "torch_threads": torch_threads,
+            "cuda_available": cuda_available,
+            "cuda_device": cuda_device,
+            "cuda_memory_mb": cuda_memory_mb,
+            "last_metrics": dict(self.last_metrics),
+        }
+
+    def play(self, audio: np.ndarray, sample_rate: int | None = None) -> None:
         sr = sample_rate or self.sample_rate
         try:
             sd.play(audio, samplerate=sr)
             sd.wait()
-        except Exception as e:
-            print(f"[TTS] ⚠ Playback error: {e}")
+        except Exception as exc:
+            print(f"[TTS] Playback error: {exc}")
 
-    def run(self, text_queue: queue.Queue):
-        """Worker loop: reads translated text, synthesizes, plays to speaker."""
-        print("[TTS Worker] ✅ Started")
+    def run(self, text_queue) -> None:
+        print("[TTS Worker] Started")
         while True:
+            item = text_queue.get()
             try:
-                item = text_queue.get(timeout=1)
                 text = item["text"]
                 direction = item.get("direction", "vi2en")
-
-                print(f"[TTS Worker] Synthesizing [{direction}]: \"{text}\"")
-                # Worker doesn't easily have original_text, but this is the real-time queue
                 audio, sr = self.synthesize(text, direction=direction)
                 self.play(audio, sample_rate=sr)
-
+            finally:
                 text_queue.task_done()
-            except queue.Empty:
-                continue
+
+    def _ensure_kokoro_vi(self) -> KokoroVietnameseRuntime:
+        with self._lock:
+            if self._kokoro_vi is None:
+                self._kokoro_vi = KokoroVietnameseRuntime(self.cfg.get("kokoro_vi", {}))
+            self._kokoro_vi.load()
+            return self._kokoro_vi
+
+    def _ensure_kokoro_en(self) -> KokoroEnglishRuntime:
+        with self._lock:
+            if self._kokoro_en is None:
+                self._kokoro_en = KokoroEnglishRuntime(self.cfg.get("kokoro_en", {}))
+            self._kokoro_en.load()
+            return self._kokoro_en
+
+    def _ensure_kokoro_en_onnx(self) -> KokoroEnglishOnnxRuntime:
+        with self._lock:
+            if self._kokoro_en_onnx is None:
+                self._kokoro_en_onnx = KokoroEnglishOnnxRuntime(self.cfg.get("kokoro_en", {}))
+            self._kokoro_en_onnx.load()
+            return self._kokoro_en_onnx
+
+    def _activate_output_language(self, language: str, warmup: bool) -> None:
+        with self._lock:
+            if self._active_output_language == language:
+                return
+            if int(self.cfg.get("max_loaded_languages", 1)) <= 1:
+                if language == "en":
+                    self._release_vietnamese()
+                else:
+                    self._release_english()
+
+            if language == "vi":
+                self._ensure_kokoro_vi()
+            else:
+                self._prepare_english_backend()
+            self._active_output_language = language
+
+            if warmup:
+                self._warmup()
+
+    def _prepare_english_backend(self) -> None:
+        backend = self.cfg.get("kokoro_en", {}).get("backend", "auto")
+        if backend == "auto_benchmark":
+            self._select_fastest_en_backend()
+        elif backend in {"auto", "onnx"}:
+            try:
+                self._ensure_kokoro_en_onnx()
+                self._active_en_backend = "onnx_int8"
+            except Exception as exc:
+                self._kokoro_en_onnx_failed = True
+                if backend == "onnx":
+                    raise
+                print(f"[TTS EN] Kokoro ONNX unavailable; preparing PyTorch: {exc}")
+                self._ensure_kokoro_en()
+                self._active_en_backend = "pytorch"
+        else:
+            self._ensure_kokoro_en()
+            self._active_en_backend = "pytorch"
+
+    def _release_vietnamese(self) -> None:
+        if self._kokoro_vi is not None:
+            self._kokoro_vi = None
+            self._release_device_memory()
+
+    def _release_english(self) -> None:
+        if self._kokoro_en is not None or self._kokoro_en_onnx is not None:
+            self._kokoro_en = None
+            self._kokoro_en_onnx = None
+            self._active_en_backend = "unloaded"
+            self._release_device_memory()
+
+    @staticmethod
+    def _release_device_memory() -> None:
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            return
+
+    def _select_fastest_en_backend(self) -> None:
+        cfg = self.cfg.get("kokoro_en", {})
+        cached_backend = self._load_cached_en_backend(cfg)
+        if cached_backend == "onnx_int8":
+            try:
+                self._ensure_kokoro_en_onnx()
+                self._active_en_backend = "onnx_int8"
+                self._en_selection_source = "cache"
+                print("[TTS EN] Using cached INT8 ONNX runtime selection.")
+                return
+            except Exception as exc:
+                print(f"[TTS EN] Cached ONNX selection is invalid; recalibrating: {exc}")
+        elif cached_backend == "pytorch":
+            self._ensure_kokoro_en()
+            self._active_en_backend = "pytorch"
+            self._en_selection_source = "cache"
+            print("[TTS EN] Using cached PyTorch runtime selection.")
+            return
+
+        try:
+            runtime = self._ensure_kokoro_en_onnx()
+            benchmark = runtime.synthesize(
+                cfg.get("benchmark_text", "This is a realtime translation.")
+            )
+            audio_s = len(benchmark.audio) / max(benchmark.sample_rate, 1)
+            rtf = (benchmark.elapsed_ms / 1000) / max(audio_s, 0.001)
+            threshold = float(cfg.get("onnx_max_rtf", 0.9))
+            print(
+                f"[TTS EN] INT8 ONNX benchmark RTF={rtf:.2f} "
+                f"(required <= {threshold:.2f})"
+            )
+            if rtf <= threshold:
+                self._active_en_backend = "onnx_int8"
+                self._en_selection_source = "benchmark"
+                self._write_cached_en_backend(cfg, "onnx_int8", rtf)
+                return
+            print("[TTS EN] INT8 ONNX is slower on this CPU; selecting warmed PyTorch.")
+        except Exception as exc:
+            self._kokoro_en_onnx_failed = True
+            print(f"[TTS EN] INT8 ONNX benchmark failed; selecting PyTorch: {exc}")
+
+        self._kokoro_en_onnx = None
+        self._kokoro_en_onnx_failed = True
+        self._ensure_kokoro_en()
+        self._active_en_backend = "pytorch"
+        self._en_selection_source = "benchmark"
+        self._write_cached_en_backend(cfg, "pytorch", rtf if "rtf" in locals() else None)
+
+    def _load_cached_en_backend(self, cfg: dict) -> str | None:
+        cache_path = self._selection_cache_path(cfg)
+        try:
+            record = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if record.get("signature") != self._selection_signature(cfg):
+            return None
+        backend = record.get("backend")
+        return backend if backend in {"onnx_int8", "pytorch"} else None
+
+    def _write_cached_en_backend(self, cfg: dict, backend: str, rtf: float | None) -> None:
+        cache_path = self._selection_cache_path(cfg)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "backend": backend,
+            "rtf": round(rtf, 4) if rtf is not None else None,
+            "signature": self._selection_signature(cfg),
+            "created_at": time.time(),
+        }
+        cache_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+    def _selection_signature(self, cfg: dict) -> dict:
+        model_path = Path(cfg.get("onnx_model_path", ""))
+        if not model_path.is_absolute():
+            model_path = Path(__file__).resolve().parents[2] / model_path
+        try:
+            stat = model_path.stat()
+            model_signature = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+        except OSError:
+            model_signature = {"size": 0, "mtime_ns": 0}
+        return {
+            "cpu": platform.processor() or os.environ.get("PROCESSOR_IDENTIFIER", "unknown"),
+            "onnx_model": model_signature,
+            "onnx_threads": int(cfg.get("onnx_num_threads", 2)),
+            "onnx_max_rtf": float(cfg.get("onnx_max_rtf", 0.9)),
+        }
+
+    @staticmethod
+    def _selection_cache_path(cfg: dict) -> Path:
+        path = Path(cfg.get("selection_cache", "models/kokoro-onnx/runtime-selection.json"))
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / path
+        return path
+
+    def _warmup(self) -> None:
+        if self._kokoro_vi is not None and self._kokoro_vi.loaded:
+            try:
+                self._kokoro_vi.synthesize(self.cfg.get("kokoro_vi", {}).get("warmup_text", "xin chào"))
+            except Exception as exc:
+                print(f"[TTS VI] Warmup skipped: {exc}")
+        if self._kokoro_en_onnx is not None and self._kokoro_en_onnx.loaded:
+            try:
+                self._kokoro_en_onnx.synthesize(
+                    self.cfg.get("kokoro_en", {}).get("warmup_text", "hello")
+                )
+            except Exception as exc:
+                print(f"[TTS EN] ONNX warmup skipped: {exc}")
+        elif self._kokoro_en is not None and self._kokoro_en.loaded:
+            try:
+                self._kokoro_en.synthesize(self.cfg.get("kokoro_en", {}).get("warmup_text", "hello"))
+            except Exception as exc:
+                print(f"[TTS EN] Warmup skipped: {exc}")
+
+    def _synthesize_en_pyttsx3(self, text: str) -> tuple[np.ndarray, int]:
+        try:
+            import pyttsx3
+            import soundfile as sf
+
+            start = time.perf_counter()
+            engine = pyttsx3.init()
+            rate = int(self.cfg.get("pyttsx3_rate", 165))
+            engine.setProperty("rate", rate)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                engine.save_to_file(text, tmp_path)
+                engine.runAndWait()
+                audio, sr = sf.read(tmp_path, dtype="float32")
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TTS EN] pyttsx3 fallback | {elapsed_ms:.0f}ms | {len(text)} chars")
+            return self._nonempty(audio), sr
+        except Exception as exc:
+            print(f"[TTS EN] pyttsx3 fallback failed: {exc}")
+            return self._silence()
+
+    def _silence(self) -> tuple[np.ndarray, int]:
+        return np.zeros(int(self.sample_rate * 0.35), dtype=np.float32), self.sample_rate
+
+    def _nonempty(self, audio: np.ndarray) -> np.ndarray:
+        arr = np.asarray(audio, dtype=np.float32)
+        if arr.ndim > 1:
+            arr = arr.mean(axis=1)
+        if len(arr) == 0:
+            return np.zeros(int(self.sample_rate * 0.35), dtype=np.float32)
+        return arr
+
+    def _log_result(self, result: SynthesisResult, text: str) -> None:
+        audio_s = len(result.audio) / max(result.sample_rate, 1)
+        rtf = (result.elapsed_ms / 1000) / max(audio_s, 0.001)
+        self.last_metrics = {
+            "engine": result.engine,
+            "inference_ms": round(result.elapsed_ms, 1),
+            "audio_s": round(audio_s, 3),
+            "rtf": round(rtf, 3),
+            "chars": len(text),
+        }
+        print(
+            f"[TTS] {result.engine} | {result.elapsed_ms:.0f}ms | "
+            f"audio={audio_s:.2f}s | RTF={rtf:.2f} | chars={len(text)}"
+        )

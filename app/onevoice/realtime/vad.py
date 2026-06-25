@@ -86,6 +86,20 @@ class StreamingVadSession:
             self.analysis_buffer = np.array([], dtype=np.float32)
         return self._flush()
 
+    def active_audio(self, max_samples: int | None = None) -> np.ndarray:
+        """Return a snapshot of the active speech segment for partial ASR."""
+        chunks: list[np.ndarray] = []
+        if self.segment:
+            chunks.extend(self.segment)
+        if len(self.analysis_buffer):
+            chunks.append(self.analysis_buffer)
+        if not chunks:
+            return np.array([], dtype=np.float32)
+        audio = np.concatenate(chunks).astype(np.float32)
+        if max_samples is not None and len(audio) > max_samples:
+            return audio[-max_samples:]
+        return audio
+
     def _is_speech(self, window: np.ndarray) -> bool:
         rms = float(np.sqrt(np.mean(np.square(window)) + 1e-9))
         if rms < self.energy_floor:

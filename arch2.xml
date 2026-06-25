@@ -1,0 +1,85 @@
+<mxfile host="app.diagrams.net" modified="2026-06-23T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="onevoice-high-level-architecture" name="OneVoice High-Level Architecture">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="960" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="OneVoice Edge: High-Level AI System Architecture" style="rounded=0;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#0f172a;fontColor=#ffffff;fontSize=25;fontStyle=1;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="24" width="1420" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="claim" value="Offline bilingual speech translation for constrained edge environments: streaming first, stable commit before MT, optional TTS outside the critical latency path." style="rounded=0;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#1e293b;fontColor=#e2e8f0;fontSize=14;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="84" width="1420" height="42" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="edgeBoundary" value="EDGE DEVICE / LAPTOP RUNTIME - NO INTERNET REQUIRED DURING EVALUATION" style="rounded=0;whiteSpace=wrap;html=1;strokeColor=#334155;strokeWidth=2;dashed=1;fillColor=none;fontColor=#334155;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="120" y="165" width="1260" height="590" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="users" value="Field Users&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;Vietnamese speaker&lt;br&gt;English speaker&lt;br&gt;noisy / limited connectivity&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#2563eb;fillColor=#dbeafe;fontColor=#0f172a;fontSize=15;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="340" width="150" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="presentation" value="Presentation Layer&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;FastAPI + browser UI&lt;br&gt;full-screen dual transcript&lt;br&gt;left: source, right: translation&lt;br&gt;speaker button for optional TTS&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#0284c7;fillColor=#e0f2fe;fontColor=#0f172a;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="250" y="220" width="230" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="streaming" value="Realtime Orchestration Layer&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;WebSocket audio frames&lt;br&gt;streaming VAD session&lt;br&gt;segment queue + watchdogs&lt;br&gt;partial/final event bus&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#0f766e;fillColor=#ccfbf1;fontColor=#0f172a;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="525" y="220" width="250" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="intelligence" value="AI Inference Layer&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;noise-robust frontend&lt;br&gt;direction-aware ASR&lt;br&gt;stable text commit&lt;br&gt;incremental machine translation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#7c3aed;fillColor=#ede9fe;fontColor=#0f172a;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="820" y="220" width="250" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="speechOut" value="Speech Output Layer&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;latency-aware Kokoro router&lt;br&gt;Vietnamese TTS fine-tune&lt;br&gt;English Kokoro runtime&lt;br&gt;background warmup&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#be123c;fillColor=#ffe4e6;fontColor=#0f172a;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1115" y="220" width="220" height="150" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="coreIdea" value="Core Streaming Policy&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;1. Show partial ASR immediately&lt;br&gt;2. Hold unstable tail words&lt;br&gt;3. Commit only stable source chunks&lt;br&gt;4. Translate committed chunks only&lt;br&gt;5. Keep TTS optional and async&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#b45309;fillColor=#fef3c7;fontColor=#0f172a;fontSize=15;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="250" y="435" width="300" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="models" value="Model Portfolio&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;GIPFormer INT8: Vietnamese ASR + audio robustness&lt;br&gt;SenseVoiceSmall: English ASR + emotion tags&lt;br&gt;EnViT5 CTranslate2 INT8: VI&lt;-&gt;EN MT&lt;br&gt;Kokoro VI 0.1.0 + Kokoro EN 0.9.4: TTS&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#4f46e5;fillColor=#eef2ff;fontColor=#0f172a;fontSize=15;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="595" y="435" width="390" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="assets" value="Offline Asset Store&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;pre-cached Hugging Face / ModelScope weights&lt;br&gt;models/envit5-ct2-int8&lt;br&gt;Kokoro voicepacks&lt;br&gt;terminology table + post-translation fixes&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#166534;fillColor=#dcfce7;fontColor=#0f172a;fontSize=15;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="435" width="305" height="170" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="flow1" style="endArrow=block;html=1;rounded=0;strokeColor=#334155;strokeWidth=2;" edge="1" parent="1" source="users" target="presentation"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="flow2" value="mic frames + control events" style="endArrow=block;html=1;rounded=0;strokeColor=#334155;strokeWidth=2;fontSize=11;fontColor=#475569;" edge="1" parent="1" source="presentation" target="streaming"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="flow3" value="speech segments + snapshots" style="endArrow=block;html=1;rounded=0;strokeColor=#334155;strokeWidth=2;fontSize=11;fontColor=#475569;" edge="1" parent="1" source="streaming" target="intelligence"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="flow4" value="text events" style="endArrow=block;html=1;rounded=0;strokeColor=#334155;strokeWidth=2;fontSize=11;fontColor=#475569;" edge="1" parent="1" source="intelligence" target="presentation">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="945" y="170"/><mxPoint x="365" y="170"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="flow5" value="speak request" style="endArrow=block;html=1;rounded=0;strokeColor=#be123c;strokeWidth=2;fontSize=11;fontColor=#be123c;" edge="1" parent="1" source="presentation" target="speechOut">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="365" y="395"/><mxPoint x="1225" y="395"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="flow6" value="WAV playback" style="endArrow=block;html=1;rounded=0;strokeColor=#be123c;strokeWidth=2;fontSize=11;fontColor=#be123c;" edge="1" parent="1" source="speechOut" target="presentation">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1225" y="150"/><mxPoint x="365" y="150"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="flow7" style="endArrow=block;html=1;dashed=1;strokeColor=#b45309;strokeWidth=2;" edge="1" parent="1" source="coreIdea" target="streaming"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="flow8" style="endArrow=block;html=1;dashed=1;strokeColor=#4f46e5;strokeWidth=2;" edge="1" parent="1" source="models" target="intelligence"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="flow9" style="endArrow=block;html=1;dashed=1;strokeColor=#166534;strokeWidth=2;" edge="1" parent="1" source="assets" target="models"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="flow10" style="endArrow=block;html=1;dashed=1;strokeColor=#166534;strokeWidth=2;" edge="1" parent="1" source="assets" target="speechOut"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="researchBox" value="Research / Novelty Framing&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;Hybrid streaming design for practical edge translation&lt;br&gt;ASR partials improve perceived responsiveness&lt;br&gt;stable commit reduces MT flicker and wrong re-translations&lt;br&gt;quantized MT and lazy TTS preserve compute budget&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#0f172a;fillColor=#f8fafc;fontColor=#0f172a;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="795" width="390" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="perfBox" value="Competition Performance Targets&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;Accuracy: BLEU / COMET + terminology handling&lt;br&gt;Naturalness: MOS from Kokoro speech output&lt;br&gt;Efficiency: RTF &amp;lt; 1.0, EoS-to-synthesis start &amp;lt; 2 s&lt;br&gt;Business: offline deployable laptop-to-edge PoC&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#92400e;fillColor=#fffbeb;fontColor=#0f172a;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="555" y="795" width="415" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="opsBox" value="Operational Controls&lt;br&gt;&lt;font style=&quot;font-size: 12px;&quot;&gt;startup warmup and /api/status readiness&lt;br&gt;UI + backend debug logs&lt;br&gt;per-stage latency traces&lt;br&gt;browser watchdog avoids stuck translating state&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;strokeColor=#334155;fillColor=#f1f5f9;fontColor=#0f172a;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1025" y="795" width="365" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="bottomNote" value="Architectural invariant: the user sees live partial speech, but MT is triggered only from stable committed text. This is the main latency/accuracy trade-off for production-grade edge speech translation." style="rounded=0;whiteSpace=wrap;html=1;strokeColor=none;fillColor=#0f172a;fontColor=#e2e8f0;fontSize=13;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="935" width="1420" height="25" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

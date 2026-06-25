@@ -2,10 +2,12 @@
 sherpa-onnx
 openai-whisper
 funasr_onnx
+funasr
+onnxscript
 modelscope
 
 # Machine translation and local web runtime
-transformers>=4.45.0
+transformers>=4.48.0,<5
 ctranslate2
 fastapi
 uvicorn
@@ -20,6 +22,9 @@ deepmultilingualpunctuation
 # TTS
 f5-tts
 pyttsx3
+loguru
+misaki[en]>=0.9.4
+vig2p>=0.1.0
 
 # Deep learning
 torch
@@ -34,7 +39,7 @@ pedalboard
 # Infrastructure
 huggingface_hub
 PyYAML
-numpy
+numpy>=1.24,<=1.26.4
 
 # OmniVoice and text processing
 accelerate

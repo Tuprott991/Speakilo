@@ -7,15 +7,15 @@ Usage (run once on Colab or local):
     python scripts/download_voice_preset.py
 
 Output:
-    src/tts/presets/en_male_narrator.wav   (5-second clean male voice)
-    src/tts/presets/en_male_narrator.txt   (transcript)
+    app/tts/presets/en_male_narrator.wav   (5-second clean male voice)
+    app/tts/presets/en_male_narrator.txt   (transcript)
 """
 
 import os
 import sys
 import urllib.request
 
-PRESET_DIR = os.path.join(os.path.dirname(__file__), "../src/tts/presets")
+PRESET_DIR = os.path.join(os.path.dirname(__file__), "../app/tts/presets")
 os.makedirs(PRESET_DIR, exist_ok=True)
 
 # ── LibriSpeech sample (public domain, studio quality, natural male narrator) ──
@@ -118,9 +118,10 @@ def print_config_snippet():
     print(f"""
 tts:
   en_speed: 0.85
-  en_preset_audio: "src/tts/presets/en_male_narrator.wav"
+  en_preset_audio: "app/tts/presets/en_male_narrator.wav"
   en_preset_text:  "Some call me nature, others call me mother nature."
-""")
+"""
+    )
 
 
 if __name__ == "__main__":

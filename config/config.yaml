@@ -24,12 +24,17 @@ asr:
   chunk_length_s: 3
 
 sensevoice:
-  model_path: "iic/SenseVoiceSmall"
+  model_path: "models/sensevoice-small-onnx"
+  model_id: "iic/SenseVoiceSmall-onnx"
+  quantize: true
+  num_threads: 4
+  preload: true
 
 translation:
   model: "VietAI/envit5-translation"
   model_dir: "models/envit5/"
   backend: "auto"
+  device: "cpu"
   ct2_model_dir: "models/envit5-ct2-int8/"
   compute_type: "int8"
   inter_threads: 1
@@ -39,10 +44,53 @@ translation:
   direction: "vi2en"
 
 tts:
-  default_engine: "betterbox"
-  en_speed: 0.85
-  en_preset_audio: "src/tts/presets/en_male_narrator.wav"
-  en_preset_text: "Some call me nature, others call me mother nature."
+  vi_engine: "kokoro"
+  en_engine: "kokoro"
+  ui_enabled_by_default: false
+  max_pending_chunks: 3
+  preload_direction: "vi2en"
+  max_loaded_languages: 1
+  background_warmup: true
+  warmup: true
+  pyttsx3_rate: 165
+  kokoro_vi:
+    enabled: true
+    version: "0.1.0"
+    package_dir: "app/tts/Kokoro-Vietnamese/src"
+    repo_id: "contextboxai/Kokoro-Vietnamese"
+    model_path:
+    voicepack_path:
+    config_path:
+    voice: "hung_thinh"
+    device: "cuda"
+    num_threads: 8
+    speed: 1.0
+    crossfade_ms: 35
+    normalize_peak: 0.95
+    max_chars: 240
+    warmup_text: "Xin chào, đây là bản dịch trực tiếp."
+  kokoro_en:
+    enabled: true
+    version: "0.9.4"
+    onnx_version: "1.0-int8"
+    backend: "pytorch"
+    package_dir: "app/tts/Kokoro-Vietnamese/kokoro"
+    repo_id: "hexgrad/Kokoro-82M"
+    onnx_model_path: "models/kokoro-onnx/model.onnx"
+    onnx_voices_path: "models/kokoro-onnx/voices.bin"
+    onnx_lang: "en-us"
+    onnx_num_threads: 8
+    onnx_max_rtf: 0.9
+    benchmark_text: "This is a realtime translation."
+    selection_cache: "models/kokoro-onnx/runtime-selection.json"
+    lang_code: "a"
+    voice: "am_adam"
+    device: "cuda"
+    num_threads: 8
+    speed: 1.0
+    split_pattern: "\\n+"
+    max_chars: 240
+    warmup_text: "Hello, this is a live translation."
   betterbox:
     model_path: "models/betterbox/"
     language: "vi"
@@ -59,3 +107,12 @@ pipeline:
   queue_maxsize: 10
   target_latency_ms: 1000
   log_latency: true
+
+streaming:
+  partial_asr_enabled: true
+  partial_interval_ms: 900
+  partial_min_audio_ms: 900
+  partial_max_audio_s: 4.0
+  stable_repeats: 2
+  stable_holdback_words: 2
+  stable_min_commit_words: 3

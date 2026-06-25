@@ -7,7 +7,7 @@ import soundfile as sf
 import numpy as np
 import librosa
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../app"))
 
 from asr.asr_manager import ASRManager
 from translation.mt_engine import Translator

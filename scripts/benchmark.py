@@ -14,10 +14,10 @@ import yaml
 import numpy as np
 import soundfile as sf
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../app"))
 
 from audio.denoise import Denoiser
-from asr.whisper_asr import ASRManager
+from asr.asr_manager import ASRManager
 from translation.mt_engine import Translator
 from tts.tts_engine import TTSEngine
 from utils.text_normalizer import normalize

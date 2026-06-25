@@ -45,7 +45,7 @@ except ImportError:
         inferWithModelOmni,
     )
 
-# Ensure src is in sys.path
+# Ensure app is in sys.path.
 _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))

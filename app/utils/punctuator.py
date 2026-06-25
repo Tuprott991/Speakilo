@@ -50,10 +50,15 @@ def _load_model() -> tuple:
             if "grouped_entities" in kwargs:
                 kwargs["aggregation_strategy"] = "none" if not kwargs["grouped_entities"] else "simple"
                 del kwargs["grouped_entities"]
+            # Reserve the 4 GB NVIDIA GPU for latency-critical TTS. Punctuation
+            # restoration is short-text work and remains fast enough on CPU.
+            kwargs["device"] = -1
             return orig_pipeline(*args, **kwargs)
         transformers.pipeline = patched_pipeline
 
         from deepmultilingualpunctuation import PunctuationModel
+        import deepmultilingualpunctuation.punctuationmodel as punctuation_module
+        punctuation_module.pipeline = patched_pipeline
         # kredor/punctuate-all hỗ trợ tiếng Việt (vi) trong 17 ngôn ngữ
         _punc_model = PunctuationModel(model="kredor/punctuate-all")
         _punc_type = "deep"

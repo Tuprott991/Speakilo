@@ -145,8 +145,13 @@ class Translator:
     }
 
     def __init__(self, config: dict):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         cfg = config["translation"]
+        requested_device = str(cfg.get("device", "auto")).lower()
+        self.device = (
+            "cuda" if requested_device == "auto" and torch.cuda.is_available()
+            else "cpu" if requested_device == "auto"
+            else requested_device
+        )
         self.model_dir = cfg.get("model_dir", None)
         self.max_length = cfg.get("max_length", 512)
         self.model_name = cfg.get("model", self.REMOTE_MODEL)
@@ -231,7 +236,7 @@ class Translator:
             self._tokenizer = self._load_tokenizer(ct2_dir)
             self._ct2_translator = ctranslate2.Translator(
                 ct2_dir,
-                device="cuda" if torch.cuda.is_available() else "cpu",
+                device=self.device,
                 compute_type=self.compute_type,
                 inter_threads=self.inter_threads,
                 intra_threads=self.intra_threads,

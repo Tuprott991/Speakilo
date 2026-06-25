@@ -13,6 +13,7 @@ Reference: gipformer — G-Group AI Lab (MIT License)
 """
 
 import time
+import threading
 import numpy as np
 
 try:
@@ -51,6 +52,7 @@ class Denoiser:
         self.num_threads = num_threads
         self._recognizer = None
         self._enabled = False
+        self._lock = threading.Lock()
 
     def load(self):
         """Download and load GIPFormer INT8 model via sherpa-onnx."""
@@ -109,9 +111,10 @@ class Denoiser:
         # Run audio through GIPFormer recognition pipeline
         # The encoder's internal acoustic modeling provides noise robustness
         # We return the original audio (GIPFormer acts as a noise-robust validator)
-        stream = self._recognizer.create_stream()
-        stream.accept_waveform(sample_rate, audio)
-        self._recognizer.decode_streams([stream])
+        with self._lock:
+            stream = self._recognizer.create_stream()
+            stream.accept_waveform(sample_rate, audio)
+            self._recognizer.decode_streams([stream])
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         print(f"[Denoiser] ⏱ {elapsed_ms:.1f}ms | noise filter applied")

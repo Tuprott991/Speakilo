@@ -12,10 +12,17 @@ Mic frames
   -> text normalization
   -> envit5 machine translation
   -> live UI rendering
-  -> optional TTS on demand
+  -> optional queued TTS for committed translations
 ```
 
-The default live pipeline keeps TTS off for latency. The web UI can synthesize the latest translated text only when the user presses the speaker button.
+The default live pipeline keeps TTS silent for latency. Press **Voice** to
+enable speech for each committed MT chunk; the control changes to **Silence**
+and stops queued/current playback immediately. TTS prefetch stays outside the
+ASR/MT critical path.
+
+The default voices are male: `am_adam` for English output and `hung_thinh` for
+Vietnamese output. The browser prepares the target-language runtime when Voice
+is enabled or the translation direction changes.
 
 ## Competition Fit
 
@@ -37,7 +44,7 @@ models/
 scripts/
   export_envit5_ct2.py         Export VietAI/envit5 to CTranslate2
   benchmark.py                 Local performance checks
-src/
+app/
   onevoice/
     adapters/                  Compatibility adapters around ASR, MT, TTS, audio, subtitles
     config/                    Project-root aware config loader
@@ -52,13 +59,15 @@ src/
   web_static/                  Full-screen browser UI
 ```
 
-`src/pipeline.py` and `src/web_app.py` are now compatibility entrypoints. The production code lives under `src/onevoice/`.
+`app/pipeline.py` and `app/web_app.py` are compatibility entrypoints. The production code lives under `app/onevoice/`.
 
 ## Setup
 
 ```powershell
 conda activate onevoice
 pip install -r requirements.txt
+python scripts/export_sensevoice_onnx.py
+.\scripts\setup_cuda_tts.ps1
 ```
 
 For browser uploads and optional TTS, install FFmpeg and make sure it is available on `PATH`.
@@ -77,7 +86,7 @@ python scripts/export_envit5_ct2.py --quantization int8 --force
 ```powershell
 conda activate onevoice
 $env:PYTHONUTF8='1'
-python -m uvicorn src.web_app:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.web_app:app --host 127.0.0.1 --port 8000
 ```
 
 Open:
@@ -93,8 +102,8 @@ The app loads and warms up models during startup. `/api/status` reports readines
 ```powershell
 conda activate onevoice
 $env:PYTHONUTF8='1'
-python src/pipeline.py --direction vi2en
-python src/pipeline.py --direction en2vi
+python app/pipeline.py --direction vi2en
+python app/pipeline.py --direction en2vi
 ```
 
 ## API Surface
@@ -108,6 +117,15 @@ python src/pipeline.py --direction en2vi
 ## Edge Notes
 
 - Use `models/envit5-ct2-int8` for the fastest CPU MT path.
+- Use `models/sensevoice-small-onnx/model_quant.onnx` for EN input. The
+  PyTorch-only `iic/SenseVoiceSmall` directory is not an ONNX runtime artifact.
+- On the current RTX 3050 laptop, both Kokoro TTS directions use PyTorch CUDA.
+  The CUDA setup script installs a matched PyTorch, TorchAudio, and TorchVision
+  build while preserving the NumPy version required by SenseVoice.
+- CTranslate2 MT and punctuation restoration remain on CPU so they can run in
+  parallel without competing with latency-critical TTS for GPU memory.
+- Vietnamese TTS keeps the fine-tuned Kokoro checkpoint to preserve voice
+  quality until its custom ONNX export is separately evaluated.
 - Keep `translation.beam_size: 1` for latency; raise it only for quality testing.
 - VAD latency is controlled by `vad_window_ms`, `vad_min_silence_ms`, and `vad_pre_roll_ms`.
 - The current ASR wrappers are segment-level. True token-level partial ASR should be the next technical upgrade if the competition hardware and model runtime allow it.
