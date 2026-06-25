@@ -9,14 +9,23 @@ Local bilingual speech translation for the OneVoice AI Challenge.
 OneVoice Edge is designed as an offline, laptop-to-edge proof of concept:
 
 ```text
-Mic frames
-  -> streaming VAD endpointing
-  -> denoise
-  -> ASR
-  -> text normalization
-  -> envit5 machine translation
-  -> live UI rendering
-  -> optional queued TTS for committed translations
+┌──────────────────────┐ → ┌──────────────────────┐ → ┌──────────────────────┐ → ┌──────────────────────┐
+│ Microphone capture   │   │ Streaming VAD        │   │ Audio conditioning   │   │ Streaming ASR        │
+│ 16 kHz mono          │   │ Speech start and end │   │ Noise suppression    │   │ Local, language-spec │
+└──────────────────────┘   └──────────────────────┘   └──────────────────────┘   └──────────────────────┘
+
+                                                                                                  │
+                                                                                                  ▼
+
+┌──────────────────────┐ → ┌──────────────────────┐ → ┌──────────────────────┐
+│ Stable text buffer   │   │ Incremental MT       │   │ Live bilingual UI    │
+│ Commit on consistency│   │ Translate committed  │   │ Critical output path │
+└──────────────────────┘   └──────────────────────┘   └──────────────────────┘
+
+                                             └──────────────→ ┌──────────────────────┐
+                                                               │ Optional TTS         │
+                                                               │ Off critical path    │
+                                                               └──────────────────────┘
 ```
 
 The default live pipeline keeps TTS silent for latency. Press **Voice** to
