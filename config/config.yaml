@@ -62,7 +62,7 @@ tts:
     voicepack_path:
     config_path:
     voice: "hung_thinh"
-    device: "cuda"
+    device: "cpu"
     num_threads: 8
     speed: 1.0
     crossfade_ms: 35
@@ -85,7 +85,7 @@ tts:
     selection_cache: "models/kokoro-onnx/runtime-selection.json"
     lang_code: "a"
     voice: "am_adam"
-    device: "cuda"
+    device: "cpu"
     num_threads: 8
     speed: 1.0
     split_pattern: "\\n+"
