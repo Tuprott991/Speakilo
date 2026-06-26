@@ -1,7 +1,8 @@
 # OneVoice Edge
 
 Offline bilingual Speech-to-Speech translation for the OneVoice AI Challenge.
-Demo Video:  ![Demo for First Round](https://drive.google.com/file/d/1UZeK9p-f9ZyVsImsyD5x-2XpMwXL-n44/view?usp=drive_link)
+
+Demo Video: [Watch the First Round Demo](https://drive.google.com/file/d/1UZeK9p-f9ZyVsImsyD5x-2XpMwXL-n44/view?usp=drive_link)
 
 <!-- Add device image -->
 ![SpeaKilo Device Image](SpeaKilo_device.png)
